@@ -719,4 +719,4 @@ def safe_output_path(output_path: str) -> str:
 
 ---
 
-*本整改报告由 fengyongjia（冯永嘉）在提交 PR 前完成，作为本次安全管理过程的最终留痕。*
+*本整改报告由 fengyongjia 在提交 PR 前完成，作为本次安全管理过程的最终留痕。*
