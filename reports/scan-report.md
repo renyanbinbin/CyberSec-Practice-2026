@@ -396,3 +396,106 @@ Run metrics:
 
 ---
 
+# 扫描报告
+
+> **扫描工具：** Bandit（Python 静态安全扫描）
+> **扫描对象：** `成员代码/tangzekai/leetcode_crawler.py`（整改前后对比）
+> **扫描时间：** 2026-06-28
+> **执行人：** 唐泽凯（tangzekai）
+
+---
+
+## 整改前扫描结果
+
+```
+bandit -r 成员代码/tangzekai/leetcode_crawler.py
+
+Run started: 2026-06-28 09:48:01
+
+Test results:
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will
+   be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703
+   Location: 成员代码/tangzekai/leetcode_crawler.py:44:8
+   assert self.session.verify is True, "TLS 证书校验必须开启"
+
+Code scanned:
+  Total lines of code: 243
+  Total lines skipped (#nosec): 0
+
+Run metrics:
+  Total issues (by severity):
+      Undefined: 0
+      Low: 1
+      Medium: 0
+      High: 0
+  Total issues (by confidence):
+      Undefined: 0
+      Low: 0
+      Medium: 0
+      High: 1
+```
+
+**整改前风险摘要：** 1 个 Low（B101, assert_used — TLS 证书校验使用 assert）
+
+---
+
+## 整改后扫描结果
+
+整改后代码已将 assert 替换为 if/raise，Bandit 扫描通过全部检查。
+
+```
+bandit -r 成员代码/tangzekai/leetcode_crawler.py
+
+Run started: 2026-06-28 09:49:48
+
+Test results:
+        No issues identified.
+
+Code scanned:
+        Total lines of code: 301
+        Total lines skipped (#nosec): 0
+
+Run metrics:
+        Total issues (by severity):
+                Undefined: 0
+                Low: 0
+                Medium: 0
+                High: 0
+        Total issues (by confidence):
+                Undefined: 0
+                Low: 0
+                Medium: 0
+                High: 0
+Files skipped (0):
+```
+
+**整改后风险摘要：** 0 个问题，全部通过 ✅
+
+---
+
+## 整改前后对比
+
+|     | 整改前 | 整改后 |
+| --- | --- | --- |
+| 发现问题数 | 1 个（B101, Low） | 0 个 ✅ |
+| B101 assert_used | 1（TLS 校验 assert） | 0（改为 if/raise） |
+| 新增安全函数 | — | 2（_check_response_size, _validate_json_response） |
+| 新增安全常量 | — | 2（MAX_RESPONSE_SIZE, SAFE_SLUG_RE） |
+| 总行数 | 243 | 301 |
+
+---
+
+## 说明
+
+- B101（assert_used）：原代码使用 `assert self.session.verify is True` 强制 TLS 校验。该 assert 在 `python -O` 优化模式下会被移除，导致 TLS 校验门控失效。整改后改为 `if self.session.verify is not True: raise RuntimeError(...)`，在任何 Python 运行模式下均有效。
+- Bandit 无法检测业务逻辑层面的安全缺陷（R-02 内存耗尽 CWE-400、R-03 ReDoS CWE-1333、R-04 Content-Type 校验缺失、R-05 GraphQL 注入 CWE-89），这些已通过人工审查识别并修复。
+- 整改前原代码已有较好的安全基础：请求超时设置、日志截断、路径穿越防护（_safe_output_path 三层防御）、具体异常类型捕获（requests.RequestException, ValueError）。
+
+---
+
+**扫描结论：** 整改后 Bandit 静态扫描 0 个问题，五项安全风险（R-01~R-05）全部修复，原有爬虫功能完整保留。
+
+---
+

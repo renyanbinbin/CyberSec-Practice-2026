@@ -334,3 +334,89 @@
 3. 不破坏原有的 DCT 水印嵌入/提取算法逻辑
 
 ---
+
+# 项目约束文档（LeetCode 每日一题爬虫）
+
+> **适用范围：** CyberSec-Practice-2026 仓库 — `成员代码/tangzekai/leetcode_crawler.py` 安全整改
+> **使用说明：** 每次开启新的 AI 对话时，将本文档完整粘贴给 AI，以防止 AI 遗忘早期约束
+> **版本：** v1.0 | 2026-06-28
+
+## 项目背景
+
+这是《信息安全管理》课程的实践作业，仓库为 `CyberSec-Practice-2026`。
+我们正在对 `成员代码/tangzekai/leetcode_crawler.py`（一个 LeetCode 每日一题爬虫）进行安全整改，已完成风险识别（R-01 ~ R-05），现在需要 AI 协助编写修复代码。
+
+---
+
+## 强制约束条件（AI 必须遵守）
+
+### 1. TLS 证书校验强制检查约束（对应 R-01：assert 用于安全关键检查）
+
+- **必须** 将 `assert self.session.verify is True` 替换为 `if self.session.verify is not True: raise RuntimeError(...)`，防止 Python `-O` 优化模式移除 assert
+- **必须** 在 `__init__` 方法中保留 TLS 强制校验逻辑，不降低安全基线
+- **禁止** 依赖 assert 做任何安全关键检查（Python -O 会移除所有 assert 语句）
+- **禁止** 在生产环境中设置 `session.verify = False`
+
+### 2. API 响应体大小限制约束（对应 R-02：内存耗尽攻击）
+
+- **必须** 设置 `MAX_RESPONSE_SIZE = 10 * 1024 * 1024`（10MB）响应体大小上限
+- **必须** 在调用 `response.json()` 或读取 `response.text` 前，检查 `Content-Length` 响应头
+- **必须** 若 Content-Length 超过上限则抛出 `ValueError` 拒绝处理
+- **禁止** 无限制地将 API 响应体加载到内存
+
+### 3. HTML 清洗 ReDoS 防护约束（对应 R-03：正则拒绝服务）
+
+- **必须** 在 `clean_html()` 方法中对输入 HTML 内容设置长度上限（建议 `MAX_HTML_LENGTH = 500KB`）
+- **必须** 超出上限的 HTML 内容在清洗前截断，并记录 `logger.warning`
+- **禁止** 对超长 HTML 内容直接执行正则清洗而不做预处理
+
+### 4. API 响应 Content-Type 校验约束（对应 R-04）
+
+- **必须** 在调用 `response.json()` 前，校验响应 `Content-Type` 包含 `application/json`
+- **必须** 若 Content-Type 不匹配则抛出 `ValueError` 并包含实际 Content-Type 值
+- **禁止** 不检查 Content-Type 直接调用 `response.json()`
+
+### 5. GraphQL 变量输入校验约束（对应 R-05：GraphQL 注入）
+
+- **必须** 在 `get_question_detail(title_slug)` 方法中对 `title_slug` 参数做格式校验
+- **必须** 使用正则 `^[a-z0-9]+(-[a-z0-9]+)*$` 校验 slug 格式（仅允许小写字母、数字、连字符）
+- **必须** 对 None / 非字符串类型 / 格式不匹配的 title_slug 抛出 `ValueError`
+- **禁止** 将未校验的外部输入直接传入 GraphQL 变量
+
+### 6. 代码风格约束
+
+- **必须** 保持原有爬虫功能逻辑不变（只加安全层，不重写业务逻辑）
+- **必须** 用语义化常量替代魔法数字
+- **禁止** 引入新的第三方依赖库（仅限使用已有依赖：`requests` + Python 标准库）
+- **禁止** 使用 `eval()`、`exec()` 或 `subprocess` 处理任何输入数据
+
+### 7. 文档约束
+
+- **必须** 在修复的函数/逻辑处添加说明注释，标注修复了哪个安全风险（引用 R-01~R-05 编号）
+- **必须** 在文件头部更新修改记录，注明整改日期和修复的风险项
+
+---
+
+## 禁止行为
+
+- ❌ 禁止移除或削弱 TLS 证书校验逻辑
+- ❌ 禁止为"方便调试"而设置 `verify=False`
+- ❌ 禁止移除 HTML 长度上限检查
+- ❌ 禁止移除 title_slug 格式校验
+- ❌ 禁止将用户凭证、API Key 硬编码到代码中
+- ❌ 禁止生成会打印完整 API 响应体的 DEBUG 日志（保留 MAX_LOG_PAYLOAD 截断）
+
+---
+
+## 期望产出
+
+1. 修复后的 `leetcode_crawler.py`，包含：
+   - assert → if/raise 替换（R-01）
+   - 响应体大小限制（R-02）
+   - HTML 清洗输入长度限制（R-03）
+   - Content-Type 校验（R-04）
+   - title_slug 输入格式校验（R-05）
+2. 修复说明注释（每处修改标注原因，引用风险编号 R-01 至 R-05）
+3. 不破坏原有的 LeetCode 爬虫功能和 HTML 清洗逻辑
+
+---
