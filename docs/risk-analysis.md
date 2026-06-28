@@ -311,4 +311,100 @@
 | R-04 | 异常处理不完整 | 低 | P2 | ✅ 已修复 |
 
 ---
+# 风险分析记录
 
+> **模块：** `成员代码/tangzekai/leetcode_crawler.py` — LeetCode 每日一题爬虫
+> **分析时间：** 2026-06-28
+> **分析人：** 唐泽楷（tangzekai）
+
+---
+
+## 一、模块功能概述
+
+该模块实现了一个 LeetCode 每日一题爬虫：通过 GraphQL API 从 leetcode.cn 获取每日题目信息、题目详情（含 HTML 格式的中英文题目描述），使用正则表达式清洗 HTML 标签，最终将结构化结果保存为 JSON 文件。涉及网络通信、HTML 解析、文件系统写入三个核心操作，均需进行安全审查。
+
+---
+
+## 二、敏感操作识别
+
+| 操作类型 | 代码位置 | 说明 |
+|----------|----------|------|
+| HTTPS 请求 | `get_daily_question()`、`get_question_detail()` → `session.post()` | 向 leetcode.cn GraphQL API 发送 POST 请求 |
+| TLS 证书校验 | `__init__()` → `assert self.session.verify is True` | 使用 assert 强制开启 TLS 校验 |
+| HTML 内容清洗 | `clean_html()` → 多个 `re.sub()` | 对 API 返回的 HTML 进行正则清洗 |
+| JSON 解析 | `response.json()` | 解析 API 返回的 JSON 响应体 |
+| 文件系统写入 | `main()` → `open(output_file, 'w')` | 将结果写入 JSON 文件 |
+| 日志输出 | 多处 `logger.info/error/warning` | 记录 API 响应内容（截断至 500 字符） |
+
+---
+
+## 三、主要安全风险清单
+
+### 风险 1：assert 用于安全关键检查（TLS 校验可被绕过）⚠️ 中危
+
+**风险编号：** R-01
+**风险名称：** assert 语句用于 TLS 证书校验强制检查
+**严重程度：** 中危（CVSS 5.3）
+**攻击场景：** Python 在 `-O`（优化模式）下运行时会移除所有 `assert` 语句。当前代码中 `assert self.session.verify is True` 如果被移除，TLS 证书校验可在无任何警告的情况下被绕过（如后续代码误设置 `session.verify = False`）。攻击者可通过中间人攻击（MITM）劫持 HTTPS 连接，篡改 API 响应数据，注入恶意内容。
+**影响范围：** 数据完整性被破坏，恶意 API 响应可导致后续 HTML 清洗、JSON 解析、文件写入等环节被利用。
+**已有防护：** 部分——代码注释中明确标注了 SECURITY 警告，且当前未设置 `verify=False`。但 assert 的运行时不可靠性使该防护形同虚设。
+
+---
+
+### 风险 2：API 响应内容无大小限制（资源耗尽）⚠️ 中危
+
+**风险编号：** R-02
+**风险名称：** API 响应体大小无上限
+**严重程度：** 中危（CVSS 5.3）
+**攻击场景：** 若 leetcode.cn API 被攻陷或 DNS 被劫持，恶意服务器返回超大响应体（如数 GB 的 JSON 或 HTML），`response.json()` 或 `response.text` 会将全部内容加载到内存，导致内存耗尽（OOM），进程崩溃。
+**影响范围：** 系统内存耗尽，进程被操作系统 OOM Killer 终止，可能影响同主机上其他服务。
+**已有防护：** 无——requests 库默认不限制响应体大小，代码也未设置 `stream=True` 或响应体大小上限检查。
+
+---
+
+### 风险 3：HTML 清洗正则存在 ReDoS 风险 ⚠️ 低危
+
+**风险编号：** R-03
+**风险名称：** 正则表达式拒绝服务（ReDoS）
+**严重程度：** 低危（CVSS 3.1）
+**攻击场景：** `clean_html()` 函数中的正则表达式 `<pre[^>]*>.*?</pre>` 使用了 `re.DOTALL` 标志配合非贪婪匹配 `.*?`。在特定恶意构造的 HTML 输入下（如嵌套大量 pre 标签或超长 pre 块），正则引擎可能产生灾难性回溯（catastrophic backtracking），导致 CPU 长时间 100% 占用。
+**影响范围：** CPU 资源被耗尽，程序长时间无响应。
+**已有防护：** 部分——数据来源为 leetcode.cn 官方 API（HTTPS），属于相对可信源。但若响应被篡改（结合 R-01），该风险可被触发。
+
+---
+
+### 风险 4：API 响应处理缺少 Content-Type 校验 ⚠️ 低危
+
+**风险编号：** R-04
+**风险名称：** 响应 Content-Type 未校验
+**严重程度：** 低危（CVSS 2.6）
+**攻击场景：** 直接调用 `response.json()` 而未先检查响应 `Content-Type` 是否为 `application/json`。若服务器返回非 JSON 内容（如 HTML 错误页面），`json()` 会抛出 `ValueError`，虽已被外层 `except` 捕获，但可能掩盖真正的安全事件（如 API 端点被重定向到钓鱼页面）。
+**影响范围：** 异常信息不够精确，不利于安全审计和问题溯源。
+**已有防护：** 部分——外层已有 `except (requests.RequestException, ValueError)` 捕获 JSON 解析异常。
+
+---
+
+### 风险 5：GraphQL 变量未做输入校验 ⚠️ 低危
+
+**风险编号：** R-05
+**风险名称：** title_slug 参数未经校验传入 GraphQL 查询
+**严重程度：** 低危（CVSS 2.3）
+**攻击场景：** `get_question_detail(title_slug)` 的 `title_slug` 参数直接作为 GraphQL 变量传入查询。若未来该函数被暴露给外部调用（如改为接收用户输入），攻击者可通过构造特殊字符（如 GraphQL 注入 payload）探测或利用 GraphQL 端点。当前调用链中 `title_slug` 来自内部 API 响应，风险较低。
+**影响范围：** 若代码重构暴露该参数，可能引发 GraphQL 注入风险。
+**已有防护：** 当前 `title_slug` 仅来自内部 API 响应的 `question.titleSlug` 字段，未被外部直接调用。
+
+---
+
+## 四、风险优先级汇总
+
+| 风险编号 | 风险名称 | 严重程度 | 修复优先级 |
+|----------|----------|----------|-----------|
+| R-01 | assert 用于 TLS 安全关键检查 | 中 | P0 |
+| R-02 | API 响应体大小无上限 | 中 | P1 |
+| R-03 | HTML 清洗正则 ReDoS 风险 | 低 | P2 |
+| R-04 | 响应 Content-Type 未校验 | 低 | P2 |
+| R-05 | GraphQL 变量未做输入校验 | 低 | P2 |
+
+---
+
+*本文档由 tangzekai 在 AI 辅助开发前完成，用于指导后续 Prompt 约束设计。*

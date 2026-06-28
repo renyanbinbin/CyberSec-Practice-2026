@@ -419,3 +419,118 @@ AI 确认已按照要求完成全部工作：
 
 ---
 
+# Prompt 记录
+
+> **模块：** `成员代码/tangzekai/leetcode_crawler.py` 安全整改
+> **记录人：** 唐泽凯（tangzekai）
+> **整改日期：** 2026-06-28
+
+---
+
+## Prompt 记录 #1 — 风险识别辅助
+
+**使用场景：** 动手改代码前，用 AI 辅助梳理安全风险
+
+**完整 Prompt：**
+
+```
+你是一位信息安全工程师。请审查以下 LeetCode 每日一题爬虫代码，
+识别其中存在的安全风险，并按严重程度（高/中/低）排序，
+每个风险给出：漏洞类型、攻击场景描述、影响范围。
+
+要求：
+- 只分析安全问题，不要重写代码
+- 重点关注：TLS 证书校验、HTTP 响应处理、正则表达式安全、输入校验四个方面
+- 如果某个风险在代码中已有部分防护但不完整，也要指出
+
+[粘贴了 leetcode_crawler.py 完整代码]
+```
+
+**AI 响应关键片段（与安全约束相关）：**
+
+> "发现以下安全风险：
+> 1. **assert 用于 TLS 安全关键检查（中危）**：`assert self.session.verify is True` 在 Python -O 模式下会被移除，TLS 证书校验可能被静默绕过...
+> 2. **API 响应体无大小限制（中危）**：`response.json()` 和 `response.text` 无 Content-Length 预检，恶意大响应可导致内存耗尽...
+> 3. **HTML 清洗正则 ReDoS 风险（低危）**：`<pre[^>]*>.*?</pre>` 配合 `re.DOTALL` 在特定输入下可触发灾难性回溯...
+> 4. **Content-Type 未校验（低危）**：直接调用 `response.json()` 未检查响应是否为 JSON...
+> 5. **GraphQL 变量未校验（低危）**：`title_slug` 直接传入 GraphQL 查询，若暴露给外部调用存在注入风险..."
+
+**偏差记录：** AI 同时建议"增加 API 调用频率限制（Rate Limiting）"，但考虑到本项目为单次运行的爬虫工具，不涉及高频调用场景，对此建议予以忽略，记录于 fix-report.md。
+
+---
+
+## Prompt 记录 #2 — 安全约束表达
+
+**使用场景：** 将约束文档粘贴给 AI 后请求生成修复代码
+
+**完整 Prompt：**
+
+```
+【项目约束文档——请在开始前完整阅读】
+[粘贴了 constraint-doc.md 中 leetcode_crawler 部分全文]
+
+现在请基于以上约束，对下面的 leetcode_crawler.py 进行安全整改，
+重点修复：
+1. R-01 assert TLS 校验：替换为 if/raise，防止 Python -O 绕过
+2. R-02 响应体大小限制：新增 _check_response_size() 方法，10MB 上限
+3. R-03 HTML ReDoS 防护：clean_html() 增加 500KB 输入长度限制
+4. R-04 Content-Type 校验：新增 _validate_json_response() 方法
+5. R-05 title_slug 校验：新增 SAFE_SLUG_RE 正则 + 格式校验
+
+请在每处修改旁添加注释说明修复的风险编号。
+禁止引入任何第三方库。
+保持原有爬虫功能和 HTML 清洗逻辑不变。
+
+[粘贴了 leetcode_crawler.py 代码]
+```
+
+**AI 响应关键片段（安全约束落实情况）：**
+
+> "已按照约束文档要求完成修复：
+> - **R-01 修复**：将 `assert self.session.verify is True` 替换为 `if self.session.verify is not True: raise RuntimeError(...)`，保证在任何 Python 运行模式下 TLS 校验都不会被跳过
+> - **R-02 修复**：新增 `_check_response_size()` 方法，通过 Content-Length 预检，10MB 超限即抛 ValueError
+> - **R-03 修复**：`clean_html()` 新增 `MAX_HTML_LENGTH = 500KB` 上限，超长输入截断并 log warning
+> - **R-04 修复**：新增 `_validate_json_response()` 方法，校验 Content-Type 包含 `application/json`，不匹配则抛出明确异常
+> - **R-05 修复**：新增 `SAFE_SLUG_RE = re.compile(r'^[a-z0-9]+(-[a-z0-9]+)*$')` 常量，`get_question_detail()` 入口处校验 title_slug 格式"
+
+**符合约束情况：** ✅ 全部约束得到落实，未引入第三方库，原有爬虫逻辑未被破坏。
+
+---
+
+## Prompt 记录 #3 — 审查验证
+
+**使用场景：** 请 AI 对自己生成的代码进行二次审查
+
+**完整 Prompt：**
+
+```
+请对以下修复后的 leetcode_crawler.py 进行安全审查：
+
+检查项：
+1. R-01 assert 替换是否使用了健壮的 if/raise？Python -O 下是否仍有效？
+2. R-02 _check_response_size() 是否在两个请求方法中都被调用？
+3. R-03 HTML 长度限制是否在 clean_html() 执行正则前生效？
+4. R-04 _validate_json_response() 是否覆盖了所有 response.json() 调用点？
+5. R-05 title_slug 校验是否可绕过？正则是否足够严格？
+6. 是否存在新引入的安全问题？
+7. 原有爬虫功能是否完整保留？
+
+[粘贴修复后的代码]
+```
+
+**AI 审查发现（关键内容）：**
+
+> "**审查结论：** 整改后代码满足项目约束文档中 R‑01 至 R‑05 的所有要求，核心安全风险已消除。
+> 所有 if/raise 检查均在 Python -O 模式下有效，响应体大小预检覆盖两个请求方法，
+> HTML 长度限制在正则清洗前执行，Content-Type 校验覆盖所有 response.json() 调用点，
+> title_slug 正则仅允许标准 LeetCode slug 格式（纯小写字母+数字+连字符），无法注入特殊字符。
+> 原有爬虫功能、HTML 清洗逻辑、文件输出路径安全防护均完整保留。"
+
+**处置：** 根据审查结果，修复后代码通过安全审查，详见 fix-report.md。
+
+---
+
+*所有 AI 交互均发生在 claude.ai 网页版，对话截图已存档于本地作业提交材料中。*
+
+---
+

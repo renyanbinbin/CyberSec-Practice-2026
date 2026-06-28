@@ -387,3 +387,93 @@
 
 ---
 
+# 安全审查清单
+
+> **审查对象：** `成员代码/tangzekai/leetcode_crawler.py`（整改后版本）
+> **审查人：** 唐泽凯（tangzekai）
+> **审查日期：** 2026-06-28
+
+---
+
+## 第一层审查：对照项目约束文档检查
+
+> 验证 AI 生成代码是否真正落实了约束文档中 R‑01 ~ R‑05 的要求
+
+| 约束条目（风险编号） | 具体要求 | 代码中是否实际落实 | 落实位置 |
+|----------------------|----------|-------------------|----------|
+| R-01 assert 替换 | 将 assert 替换为 if/raise，防止 Python -O 移除 | ✅ 是 | `LeetCodeCrawler.__init__()` 第 52-53 行 |
+| R-01 TLS 不降低 | 保持 verify=True，不设置 verify=False | ✅ 是 | 第 45-48 行 headers 设置，无 verify=False |
+| R-02 响应体大小限制 | 设置 MAX_RESPONSE_SIZE = 10MB | ✅ 是 | 常量定义第 27 行 |
+| R-02 Content-Length 预检 | 解析 JSON/文本前检查 Content-Length | ✅ 是 | `_check_response_size()` 第 55-71 行 |
+| R-02 两处请求均覆盖 | get_daily_question 和 get_question_detail 都调用 | ✅ 是 | 第 121 行和第 189 行 |
+| R-03 HTML 长度上限 | 设置 MAX_HTML_LENGTH = 500KB | ✅ 是 | `clean_html()` 第 219-225 行 |
+| R-03 截断前 log warning | 超限截断时记录日志 | ✅ 是 | 第 221-224 行 logger.warning |
+| R-04 Content-Type 校验 | 检查 application/json | ✅ 是 | `_validate_json_response()` 第 73-84 行 |
+| R-04 两处请求均覆盖 | get_daily_question 和 get_question_detail 都调用 | ✅ 是 | 第 125 行和第 193 行 |
+| R-05 slug 正则校验 | 使用 SAFE_SLUG_RE 正则 | ✅ 是 | `get_question_detail()` 第 149-154 行 |
+| R-05 None/非字符串/格式检查 | 三重校验 | ✅ 是 | 第 149-154 行 |
+| 无第三方库 | 只用 requests + 标准库 | ✅ 是 | import 清单无新增 |
+| 注释标注修复 | 每处修改标注 R-01~R-05 | ✅ 是 | 代码中多处 `# R-01:`、`# R-02:` 等注释 |
+| 原有功能不变 | 爬虫逻辑 + HTML 清洗 + 文件输出不变 | ✅ 是 | crawl_daily_question/clean_html/\_safe_output_path 核心逻辑完整保留 |
+
+---
+
+## 第二层审查：人工业务逻辑审查
+
+### 认证与授权
+
+| 检查项 | 结果 | 说明 |
+|--------|------|------|
+| TLS 证书校验是否强制 | ✅ 是 | if/raise 在任何 Python 模式下均有效，不可绕过 |
+| API 请求是否有身份验证 | ⚠️ 部分 | LeetCode GraphQL API 为公开接口，无需认证。属于设计特性 |
+| 是否遵循最小权限原则 | ✅ 是 | 文件输出限制在 OUTPUT_DIR，路径穿越三层防护 |
+
+### 错误响应安全性
+
+| 检查项 | 结果 | 说明 |
+|--------|------|------|
+| 错误信息是否泄露内部路径 | ✅ 已消除 | 日志仅打印文件名和状态信息 |
+| 异常是否被静默吞掉 | ✅ 已消除 | 所有安全异常（路径越界、Content-Type 不匹配等）均抛出明确 ValueError/RuntimeError |
+| 异常是否暴露敏感信息 | ⚠️ 轻微 | 日志截断至 500 字符，不暴露完整 API 响应 |
+
+### 数据存取安全性
+
+| 检查项 | 结果 | 说明 |
+|--------|------|------|
+| HTTP 响应内容大小受控 | ✅ 是 | Content-Length 预检，10MB 上限 |
+| API 响应类型校验 | ✅ 是 | Content-Type 必须包含 application/json |
+| 文件写入路径受控 | ✅ 是 | _safe_output_path 三层防护（正则 + Path.name + OUTPUT_DIR 边界） |
+| GraphQL 变量安全 | ✅ 是 | title_slug 仅允许 `[a-z0-9]+(-[a-z0-9]+)*` |
+
+### 代码健壮性与可维护性
+
+| 检查项 | 结果 | 说明 |
+|--------|------|------|
+| 魔法数字是否消除 | ✅ 是 | MAX_RESPONSE_SIZE、MAX_HTML_LENGTH 等语义化常量 |
+| 关键函数文档 | ✅ 是 | 每个新增方法均有 docstring + 风险编号标注 |
+| 调试代码残留 | ✅ 无 | 无遗留调试代码 |
+| Python -O 兼容 | ✅ 是 | 无 assert 用于安全关键路径 |
+
+---
+
+## 总体审查结论
+
+### 已修复的问题
+- ✅ **R-01 assert TLS 校验**：if/raise 替换 assert，Python -O 下仍有效。
+- ✅ **R-02 响应体无大小限制**：Content-Length 预检 + 10MB 硬上限。
+- ✅ **R-03 HTML ReDoS 风险**：500KB HTML 长度上限 + 截断机制。
+- ✅ **R-04 Content-Type 缺失**：两个请求方法均添加 JSON Content-Type 校验。
+- ✅ **R-05 GraphQL 变量未校验**：title_slug SAFE_SLUG_RE 正则 + 三重检查。
+
+### 遗留可接受风险
+- **无 API 身份认证**：LeetCode GraphQL API 为公开接口，无需认证，属于合理设计。
+- **Rate Limiting 缺失**：本脚本为单次运行爬虫，不涉及高频调用，本次不整改。
+- **Content-Length 可能缺失**：若服务器不返回 Content-Length 头，响应体大小预检被跳过（但 10s 超时可作为兜底保护）。
+
+### 新引入问题
+- **无**：未发现新引入的安全漏洞。
+
+**审查结论：** 整改后代码满足项目约束文档中 R‑01 至 R‑05 的所有要求，核心安全风险已消除，原有爬虫功能完整保留，代码可合并入主分支。
+
+---
+
